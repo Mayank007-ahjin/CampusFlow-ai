@@ -1,0 +1,10 @@
+# Core Framework
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+groq
+python-dateutil
