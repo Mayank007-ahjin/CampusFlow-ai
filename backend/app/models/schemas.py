@@ -9,6 +9,7 @@ class FacilityType(str, Enum):
     LIBRARY = "library"
     CANTEEN = "canteen"
     STATIONERY = "stationery"
+    OFFICE = "office"
 
 
 class CrowdLevel(str, Enum):
@@ -35,8 +36,8 @@ class FacilityBase(BaseModel):
     location: Optional[str] = Field(None, max_length=200)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    opening_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
-    closing_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    opening_time: Optional[str] = Field(None, pattern=r"^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$")
+    closing_time: Optional[str] = Field(None, pattern=r"^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$")
     total_capacity: Optional[int] = Field(None, ge=0)
 
 
@@ -49,8 +50,8 @@ class FacilityUpdate(BaseModel):
     """Schema for updating a facility."""
     name: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=200)
-    opening_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
-    closing_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    opening_time: Optional[str] = Field(None, pattern=r"^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$")
+    closing_time: Optional[str] = Field(None, pattern=r"^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$")
     is_open: Optional[bool] = None
     total_capacity: Optional[int] = Field(None, ge=0)
 

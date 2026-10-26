@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
+import { CampusMapModal } from './CampusMapModal'
 
 export function DetailScreen({ facility, onSubmitReport }) {
   const [selectedPill, setSelectedPill] = useState('Empty')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitSuccess, setSubmitSuccess] = useState(false)
+  const [isMapOpen, setIsMapOpen] = useState(false)
 
   if (!facility) return <div className="p-4">No facility selected</div>
 
@@ -78,6 +80,14 @@ export function DetailScreen({ facility, onSubmitReport }) {
         </div>
       </div>
 
+      {/* Interactive Map View Trigger Button */}
+      <button
+        onClick={() => setIsMapOpen(true)}
+        className="w-full h-[40px] bg-slate-900 text-white rounded font-medium text-[13px] cursor-pointer hover:bg-slate-800 transition-colors mb-4 flex items-center justify-center gap-2 shadow-xs"
+      >
+        <span>View on Interactive Campus Map</span>
+      </button>
+
       <div className="text-[14px] font-semibold mb-1">Report Current Condition</div>
       <div className="text-[12px] text-gray-500 mb-2.5">Help fellow students verify this data:</div>
 
@@ -104,6 +114,11 @@ export function DetailScreen({ facility, onSubmitReport }) {
       >
         {submitSuccess ? '✓ Report Recorded. Thank you!' : isSubmitting ? 'Submitting...' : 'Submit Quick Update'}
       </button>
+
+      {/* Campus Map Modal */}
+      {isMapOpen && (
+        <CampusMapModal facility={facility} onClose={() => setIsMapOpen(false)} />
+      )}
     </div>
   )
 }

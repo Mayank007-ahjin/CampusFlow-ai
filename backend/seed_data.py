@@ -11,16 +11,16 @@ from app.models import Facility, Report, FacilityType, CrowdLevel, DataSource
 
 
 def create_initial_facilities(db):
-    """Create the three core facilities."""
+    """Create core facilities including new additions."""
     facilities = [
         Facility(
             name="Central Library",
             type=FacilityType.LIBRARY,
-            location="Building AB2, Ground Floor",
+            location="Building Academic Block 1, 3rd floor",
             latitude=28.6139,
             longitude=77.2090,
-            opening_time="08:30",
-            closing_time="22:00",
+            opening_time="08:30 AM",
+            closing_time="10:00 PM",
             is_open=True,
             total_capacity=120,
             current_crowd_level=CrowdLevel.LOW,
@@ -32,11 +32,11 @@ def create_initial_facilities(db):
         Facility(
             name="Main Canteen",
             type=FacilityType.CANTEEN,
-            location="MESS building, ground Floor",
+            location="Mess Building, Ground Floor",
             latitude=28.6145,
             longitude=77.2095,
-            opening_time="07:30",
-            closing_time="21:00",
+            opening_time="07:30 AM",
+            closing_time="09:00 PM",
             is_open=True,
             total_capacity=200,
             current_crowd_level=CrowdLevel.HIGH,
@@ -48,11 +48,11 @@ def create_initial_facilities(db):
         Facility(
             name="Stationery & Print Shop",
             type=FacilityType.STATIONERY,
-            location="Near the Worshop building",
+            location="Near the Workshop Building",
             latitude=28.6142,
             longitude=77.2088,
-            opening_time="08:30",
-            closing_time="18:00",
+            opening_time="08:30 AM",
+            closing_time="06:00 PM",
             is_open=True,
             total_capacity=None,
             current_crowd_level=CrowdLevel.MODERATE,
@@ -60,6 +60,38 @@ def create_initial_facilities(db):
             available_seats=None,
             data_source=DataSource.SIMULATED,
             confidence_score=0.5,
+        ),
+        Facility(
+            name="Central Library (AB2 Branch)",
+            type=FacilityType.LIBRARY,
+            location="Academic Block 2, Ground Floor",
+            latitude=28.6150,
+            longitude=77.2100,
+            opening_time="08:00 AM",
+            closing_time="08:00 PM",
+            is_open=True,
+            total_capacity=150,
+            current_crowd_level=CrowdLevel.MODERATE,
+            available_seats=68,
+            estimated_wait_minutes=None,
+            data_source=DataSource.SIMULATED,
+            confidence_score=0.8,
+        ),
+        Facility(
+            name="College Administrative Office",
+            type=FacilityType.OFFICE,
+            location="Adjacent to Academic Block 1",
+            latitude=28.6153,
+            longitude=77.2105,
+            opening_time="09:00 AM",
+            closing_time="05:00 PM",
+            is_open=True,
+            total_capacity=50,
+            current_crowd_level=CrowdLevel.LOW,
+            estimated_wait_minutes=5,
+            available_seats=15,
+            data_source=DataSource.SIMULATED,
+            confidence_score=0.75,
         ),
     ]
 
@@ -76,45 +108,17 @@ def create_sample_reports(db, facilities):
     reports = []
     now = datetime.utcnow()
 
-    # Library reports (last 2 hours)
-    library = facilities[0]
-    for i in range(8):
-        timestamp = now - timedelta(minutes=random.randint(5, 120))
-        reports.append(Report(
-            facility_id=library.id,
-            crowd_level=random.choice([CrowdLevel.LOW, CrowdLevel.LOW, CrowdLevel.MODERATE]),
-            available_seats=random.randint(30, 60),
-            timestamp=timestamp,
-            data_source=DataSource.STUDENT_REPORT,
-        ))
-
-    # Canteen reports (last 2 hours)
-    canteen = facilities[1]
-    for i in range(10):
-        timestamp = now - timedelta(minutes=random.randint(5, 120))
-        crowd = random.choice([CrowdLevel.MODERATE, CrowdLevel.HIGH, CrowdLevel.HIGH])
-        wait = random.randint(10, 25) if crowd == CrowdLevel.HIGH else random.randint(5, 12)
-        reports.append(Report(
-            facility_id=canteen.id,
-            crowd_level=crowd,
-            estimated_wait_minutes=wait,
-            queue_length=random.randint(8, 20),
-            timestamp=timestamp,
-            data_source=DataSource.STUDENT_REPORT,
-        ))
-
-    # Stationery reports (last 2 hours)
-    stationery = facilities[2]
-    for i in range(6):
-        timestamp = now - timedelta(minutes=random.randint(5, 120))
-        reports.append(Report(
-            facility_id=stationery.id,
-            crowd_level=random.choice([CrowdLevel.LOW, CrowdLevel.MODERATE]),
-            estimated_wait_minutes=random.randint(2, 8),
-            queue_length=random.randint(1, 5),
-            timestamp=timestamp,
-            data_source=DataSource.STUDENT_REPORT,
-        ))
+    for facility in facilities:
+        for i in range(5):
+            timestamp = now - timedelta(minutes=random.randint(5, 120))
+            reports.append(Report(
+                facility_id=facility.id,
+                crowd_level=random.choice([CrowdLevel.LOW, CrowdLevel.MODERATE]),
+                available_seats=random.randint(20, 50) if facility.type == FacilityType.LIBRARY else None,
+                estimated_wait_minutes=random.randint(2, 10) if facility.type != FacilityType.LIBRARY else None,
+                timestamp=timestamp,
+                data_source=DataSource.STUDENT_REPORT,
+            ))
 
     for report in reports:
         db.add(report)
@@ -135,11 +139,11 @@ def seed_database():
     db = SessionLocal()
 
     try:
-        # Check if data already exists
-        existing_facilities = db.query(Facility).count()
-        if existing_facilities > 0:
-            print(f"[WARNING] Database already has {existing_facilities} facilities. Skipping seed.")
-            return
+        # Clear existing data to allow fresh seed with 12-hr clock and new facilities
+        db.query(Report).delete()
+        db.query(Facility).delete()
+        db.commit()
+        print("[OK] Cleared existing database records")
 
         # Create facilities
         facilities = create_initial_facilities(db)
@@ -150,7 +154,7 @@ def seed_database():
         print("\n[SUCCESS] Database seeding completed successfully!")
         print("\nCreated facilities:")
         for f in facilities:
-            print(f"  - {f.name} ({f.type.value})")
+            print(f"  - {f.name} ({f.type.value}) | {f.opening_time} - {f.closing_time}")
 
     except Exception as e:
         print(f"\n[ERROR] Error during seeding: {e}")

@@ -38,6 +38,8 @@ class RecommendationEngine:
         if not target_types:
             if any(w in query_lower for w in ["stationery", "print", "shop", "pen", "notebook"]):
                 target_types = [FacilityType.STATIONERY]
+            elif any(w in query_lower for w in ["office", "administrative", "admin", "dean", "fees", "registration"]):
+                target_types = [FacilityType.OFFICE]
             elif any(w in query_lower for w in ["library", "book", "study", "read", "quiet"]):
                 target_types = [FacilityType.LIBRARY]
             elif any(w in query_lower for w in ["canteen", "food", "lunch", "eat", "hungry", "snack"]):
@@ -55,7 +57,7 @@ class RecommendationEngine:
         if not facilities:
             return RecommendationResponse(
                 query=request.query,
-                answer="No facilities are currently available matching your criteria.",
+                answer="No facilities currently available.",
                 recommendations=[],
                 timestamp=datetime.utcnow()
             )
@@ -69,7 +71,7 @@ class RecommendationEngine:
         is_comparison = any(w in query_lower for w in ["all", "compare", "list", "everything", "best places", "what's available"])
         final_options = ranked_options if (target_types or is_comparison) else ranked_options[:1]
 
-        # Generate natural language explanation
+        # Generate structured bullet & arrow explanation (4-5 lines)
         answer = await self._generate_explanation(
             query=request.query,
             options=final_options
@@ -87,7 +89,7 @@ class RecommendationEngine:
         request: RecommendationRequest
     ) -> RecommendationResponse:
         """
-        Plan optimal route across multiple facilities based on query.
+        Plan optimal route across multiple facilities based on query using LLM and intelligent sequencing.
         """
         query_lower = request.query.lower()
         facilities = self._get_candidate_facilities(
@@ -103,14 +105,17 @@ class RecommendationEngine:
             max_wait_minutes=request.max_wait_minutes
         )
 
-        # Sort or prioritize based on user intent keywords in route query
-        if "stationery" in query_lower or "print" in query_lower or "quick" in query_lower:
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.STATIONERY else (1 if x.facility_type == FacilityType.LIBRARY else 2))
-        elif "food" in query_lower or "lunch" in query_lower or "canteen" in query_lower:
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.CANTEEN else (1 if x.facility_type == FacilityType.LIBRARY else 2))
-        elif "study" in query_lower or "library" in query_lower or "group" in query_lower:
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.LIBRARY else (1 if x.facility_type == FacilityType.STATIONERY else 2))
+        # Intelligent sorting based on custom query keywords
+        if any(w in query_lower for w in ["stationery", "print", "shop"]):
+            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.STATIONERY else 1)
+        elif any(w in query_lower for w in ["office", "administrative", "admin"]):
+            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.OFFICE else 1)
+        elif any(w in query_lower for w in ["food", "lunch", "canteen", "eat"]):
+            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.CANTEEN else 1)
+        elif any(w in query_lower for w in ["study", "library", "book", "read", "quiet"]):
+            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.LIBRARY else 1)
 
+        # Generate structured arrow route itinerary (4-5 lines)
         answer = await self._generate_route_explanation(
             query=request.query,
             options=ranked_options
@@ -132,13 +137,13 @@ class RecommendationEngine:
 
         for facility in facilities:
             if facility.current_crowd_level == CrowdLevel.HIGH:
-                wait_str = f" Expected wait is ~{facility.estimated_wait_minutes} mins." if facility.estimated_wait_minutes else ""
+                wait_str = f" (~{facility.estimated_wait_minutes}m wait)" if facility.estimated_wait_minutes else ""
                 alerts.append(AlertResponse(
                     id=facility.id,
                     facility_name=facility.name,
                     alert_type="peak_rush",
                     severity="high",
-                    message=f"Notice: {facility.name} is currently experiencing peak traffic.{wait_str} Consider visiting alternative locations.",
+                    message=f"{facility.name}: High traffic{wait_str}. Consider alternatives.",
                     timestamp=datetime.utcnow()
                 ))
             elif facility.type == FacilityType.LIBRARY and facility.available_seats and facility.available_seats > 30:
@@ -147,7 +152,7 @@ class RecommendationEngine:
                     facility_name=facility.name,
                     alert_type="optimal_study",
                     severity="info",
-                    message=f"Notice: {facility.name} has strong availability ({facility.available_seats} open seats). Recommended for study sessions.",
+                    message=f"{facility.name}: {facility.available_seats} open seats. Recommended.",
                     timestamp=datetime.utcnow()
                 ))
 
@@ -157,7 +162,7 @@ class RecommendationEngine:
                 facility_name="Campus Network",
                 alert_type="status_normal",
                 severity="low",
-                message="All campus facilities are currently operating normally with stable crowd levels.",
+                message="All campus facilities operating normally.",
                 timestamp=datetime.utcnow()
             ))
 
@@ -246,109 +251,121 @@ class RecommendationEngine:
         elif facility.current_crowd_level == CrowdLevel.MODERATE:
             reasons.append("Moderate crowd")
         else:
-            reasons.append("Currently busy")
+            reasons.append("Busy")
 
         if facility.estimated_wait_minutes:
-            if facility.estimated_wait_minutes <= 5:
-                reasons.append(f"~{facility.estimated_wait_minutes} min wait")
-            else:
-                reasons.append(f"{facility.estimated_wait_minutes} min wait")
+            reasons.append(f"~{facility.estimated_wait_minutes}m wait")
 
         if facility.available_seats and facility.type != FacilityType.STATIONERY:
-            reasons.append(f"{facility.available_seats} seats available")
+            reasons.append(f"{facility.available_seats} seats free")
 
-        if facility.last_updated:
-            age_minutes = (datetime.utcnow() - facility.last_updated).total_seconds() / 60
-            if age_minutes < 5:
-                reasons.append("just updated")
-
-        return " • ".join(reasons) if reasons else "Limited data available"
+        return " • ".join(reasons) if reasons else "Available"
 
     async def _generate_explanation(
         self,
         query: str,
         options: List[RecommendationOption]
     ) -> str:
-        """Generate natural language explanation of recommendations."""
-        if not settings.GROQ_API_KEY or not options:
-            return self._fallback_explanation(options)
+        """Generate structured 4-5 line clean professional explanation with arrows."""
+        if not options:
+            return "No facilities available matching your query."
+
+        if not settings.GROQ_API_KEY:
+            best = options[0]
+            return f"Recommended Facility:\n-> {best.facility_name}\n-> Status: {best.crowd_level.value.upper()} crowd ({best.reason})\n-> Optimal choice for your query."
 
         try:
             from groq import Groq
             client = Groq(api_key=settings.GROQ_API_KEY)
+            context = self._build_context(options)
 
-            query_lower = query.lower().strip()
-            is_greeting = query_lower in ["hi", "hello", "hey", "sup", "good morning", "good evening", "how are you", "who are you"]
+            prompt = f"""Student query: "{query}"
 
-            if is_greeting:
-                prompt = f"""The user said: "{query}"
-Reply as a friendly campus assistant named CampusFlow AI. Greet them back warmly in 1-2 sentences and let them know you can help them find study spots, check canteen wait times, or locate print shops."""
-            else:
-                context = self._build_context(options)
-                if len(options) == 1:
-                    prompt = f"""You are a helpful campus assistant. A student asked: "{query}"
-
-Here is the current status of the requested facility:
+Live facilities available:
 {context}
 
-Provide a direct, friendly answer (1-2 sentences) about this facility's status based on the data above. Focus ONLY on this facility and do not bring up other facilities."""
-                else:
-                    prompt = f"""You are a helpful campus assistant. A student asked: "{query}"
-
-Here are the current facility conditions:
-{context}
-
-Provide a brief, friendly recommendation (2-3 sentences) explaining which facility is best and why, based on the data above. Be specific about wait times and crowd levels."""
+Provide a crisp, professional, and directly informative response in exactly 4 to 5 lines using arrows (->). No emojis. Format strictly as:
+Recommended Facility: [Facility Name]
+-> Location & Status: [Location details] | [Crowd/Wait/Seats]
+-> Key Advantage: [Short specific reason]
+-> Recommendation: Optimal choice for your request."""
 
             response = client.chat.completions.create(
                 model=settings.GROQ_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are a helpful campus assistant providing facility recommendations based on real-time data."},
+                    {"role": "system", "content": "You are a professional campus assistant. Provide clean, structured 4-5 line responses using arrows. Absolutely no emojis."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=150
+                temperature=0.4,
+                max_tokens=120
             )
 
             return response.choices[0].message.content.strip()
 
         except Exception as e:
             print(f"LLM generation failed: {e}")
-            return self._fallback_explanation(options)
+            best = options[0]
+            return f"Recommended Facility:\n-> {best.facility_name}\n-> Status: {best.crowd_level.value.upper()} crowd ({best.reason})\n-> Optimal choice for your query."
 
     async def _generate_route_explanation(
         self,
         query: str,
         options: List[RecommendationOption]
     ) -> str:
-        """Generate explanation for multi-facility route planning."""
+        """Generate structured 4-5 line clean professional route itinerary with numbered steps and arrows."""
         if not options:
-            return "No facilities match your requirements."
+            return "No facilities match your route."
 
-        if len(options) == 1:
-            return f"{options[0].facility_name} is your best option. {options[0].reason}."
+        if not settings.GROQ_API_KEY:
+            if len(options) == 1:
+                return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n-> Ready for visit."
+            return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n2. -> {options[1].facility_name} ({options[1].reason})\n-> Efficient multi-stop flow."
 
-        return f"Agent Itinerary: First, visit {options[0].facility_name} ({options[0].reason}), then proceed to {options[1].facility_name} ({options[1].reason}) for optimized campus flow."
+        try:
+            from groq import Groq
+            client = Groq(api_key=settings.GROQ_API_KEY)
+            context = self._build_context(options)
+
+            prompt = f"""Student itinerary goal: "{query}"
+
+Live facilities available:
+{context}
+
+Provide a crisp, professional route itinerary in exactly 4 to 5 lines using numbers (1., 2.) and arrows (->). No emojis. Format strictly as:
+Optimized Itinerary Plan:
+1. -> [First Facility] ([Reason])
+2. -> [Second Facility] ([Reason])
+-> Flow: Sequenced for minimum wait time."""
+
+            response = client.chat.completions.create(
+                model=settings.GROQ_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a professional campus routing assistant. Provide clean 4-5 line itineraries using numbers and arrows. Absolutely no emojis."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,
+                max_tokens=120
+            )
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            print(f"Route LLM generation failed: {e}")
+            if len(options) == 1:
+                return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n-> Ready for visit."
+            return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n2. -> {options[1].facility_name} ({options[1].reason})\n-> Efficient multi-stop flow."
 
     def _build_context(self, options: List[RecommendationOption]) -> str:
         """Build context string from recommendation options."""
         lines = []
         for opt in options:
             lines.append(
-                f"- {opt.facility_name}: {opt.crowd_level.value} crowd, "
-                f"{opt.estimated_wait_minutes or 'unknown'} min wait, "
-                f"{opt.available_seats or 'N/A'} seats"
+                f"- {opt.facility_name}: {opt.crowd_level.value} crowd, {opt.estimated_wait_minutes or '0'}m wait, {opt.available_seats or 'N/A'} seats"
             )
         return "\n".join(lines)
 
     def _fallback_explanation(self, options: List[RecommendationOption]) -> str:
-        """Generate deterministic explanation without LLM."""
+        """Generate short deterministic explanation."""
         if not options:
-            return "No facilities are currently available."
-
+            return "No facilities available."
         best = options[0]
-        return (
-            f"{best.facility_name} is your best option right now. "
-            f"{best.reason}. "
-            f"This recommendation is based on recent student reports."
-        )
+        return f"Recommended:\n-> {best.facility_name}\n{best.crowd_level.value.upper()} crowd ({best.reason})\nBest current option."
