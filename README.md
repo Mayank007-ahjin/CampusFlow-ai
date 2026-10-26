@@ -114,4 +114,3 @@ This is a college project. All rights reserved.
 
 ---
 
-**Last Updated:** October 24, 2026
