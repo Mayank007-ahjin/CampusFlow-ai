@@ -5,10 +5,12 @@ A multi-agent campus intelligence platform that helps students make informed dec
 ## 📋 Project Overview
 
 CampusFlow provides real-time insights into campus facility usage, helping students:
-- Check library seat availability and crowd levels
-- Estimate canteen wait times
-- See stationery shop queue lengths
-- Get AI-powered recommendations for optimal visit timing
+- Check library seat availability and crowd levels across multiple campus branches (Central Library & AB2 Branch)
+- Estimate canteen wait times and rush status
+- Check stationery shop queue lengths and operating hours
+- Access the College Administrative Office with 12-hour operational time tracking
+- **OpenCampus GIS Map Viewer**: Interactive OpenStreetMap-style campus map modal featuring live vector building blocks, pan/drag capabilities, zoom controls, and dynamic crowd status badges
+- Get AI-powered recommendations and multi-facility route itineraries via Groq API integration (strict 4-5 line professional formatting with arrows, zero emojis)
 
 ## 🏗️ Project Structure
 
@@ -63,14 +65,16 @@ npm run dev
 ## 🎯 Current Scope (Phase 1)
 
 **Facilities:**
-- Central Library (occupancy, seat availability)
-- Main Canteen (queue estimates, wait times)
-- Stationery & Print Shop (crowd levels, availability)
+- Central Library (Academic Block 1)
+- Central Library (AB2 Branch, Ground Floor)
+- Main Canteen (Mess Building)
+- Stationery & Print Shop (Near Workshop Building)
+- College Administrative Office (Adjacent to Academic Block 1)
 
-**Data Sources:**
-- Student-submitted reports
-- Historical patterns
-- Simulated data (clearly labeled for demo)
+**Features & Enhancements:**
+- 12-Hour Clock Format (`AM`/`PM`) for operating hours across all facilities and backend validations
+- Interactive OpenCampus GIS Map Viewer with pan, zoom, and live facility markers
+- Precision AI recommendation filtering (excludes libraries/unrelated facilities when specific office or stationery queries are made)
 
 ## 🧠 Multi-Agent Architecture
 
@@ -83,11 +87,11 @@ npm run dev
 
 ## 🛠️ Tech Stack
 
-- **Frontend:** React, Vite, Tailwind CSS
-- **Backend:** Python, FastAPI
-- **Database:** PostgreSQL / Supabase
-- **LLM:** Groq API (backend only)
-- **Maps:** Leaflet / MapLibre (planned)
+- **Frontend:** React, Vite, Tailwind CSS, OpenCampus GIS Vector Viewport
+- **Backend:** Python, FastAPI, SQLAlchemy, Pydantic V2
+- **Database:** SQLite / PostgreSQL
+- **LLM:** Groq API (Groq SDK) for natural language recommendations and routing
+- **Maps:** Custom interactive OpenStreetMap vector viewer with pan, drag, and zoom controls
 
 ## 📅 Development Roadmap
 
