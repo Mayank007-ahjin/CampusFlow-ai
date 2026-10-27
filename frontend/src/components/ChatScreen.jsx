@@ -1,6 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef } from 'react'
 
 export function ChatScreen({ messages, onSendMessage, inputQuery, setInputQuery }) {
+  const messagesEndRef = useRef(null)
+
   const promptChips = [
     "Plan my campus route (Print & Study)",
     "Plan my campus route (Food & Print)",
@@ -10,48 +12,57 @@ export function ChatScreen({ messages, onSendMessage, inputQuery, setInputQuery 
     "Quiet space for next 2 hours?"
   ]
 
-  const handleSend = (e) => {
-    e?.preventDefault()
-    if (!inputQuery.trim()) return
-    onSendMessage(inputQuery)
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  return (
-    <div className="p-4 overflow-y-auto flex-1 flex flex-col justify-between">
-      <div>
-        <div className="flex gap-2 overflow-x-auto pb-2 mb-3 scrollbar-none">
-          {promptChips.map((chip, index) => (
-            <button
-              key={index}
-              onClick={() => onSendMessage(chip)}
-              className="whitespace-nowrap bg-gray-200 text-gray-700 px-3 py-1.5 rounded-full text-[12px] font-medium cursor-pointer border-none hover:bg-gray-300"
-            >
-              {chip}
-            </button>
-          ))}
-        </div>
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
 
-        <div className="flex flex-col gap-3">
-          {messages.map((msg, index) => (
-            <div
-              key={index}
-              className={`p-3 rounded-lg text-[14px] leading-relaxed max-w-[88%] ${
-                msg.sender === 'user'
-                  ? 'self-end bg-brand-primary text-white rounded-br-sm'
-                  : 'self-start bg-white border border-gray-200 rounded-bl-sm w-full'
-              }`}
-            >
-              <div>{msg.text}</div>
-              {msg.recommendation && (
-                <div className="mt-2.5 bg-gray-50 border border-gray-200 rounded p-2.5">
-                  <div className="font-semibold text-[13px] mb-1">📚 {msg.recommendation.facility_name}</div>
-                  <div className="text-[12px] text-green-700 font-medium">Status: {msg.recommendation.reason}</div>
-                  <div className="text-[11px] text-gray-500 mt-1">Verified via live student reports</div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+  return (
+    <div className="flex-1 flex flex-col h-full bg-slate-50 overflow-y-auto p-3">
+      {/* Prompt Chips */}
+      <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2 flex-shrink-0 scrollbar-none">
+        {promptChips.map((chip, idx) => (
+          <button
+            key={idx}
+            onClick={() => onSendMessage(chip)}
+            className="whitespace-nowrap bg-white border border-slate-200 text-slate-700 px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer hover:bg-slate-100 shadow-2xs"
+          >
+            {chip}
+          </button>
+        ))}
+      </div>
+
+      {/* Messages List */}
+      <div className="flex flex-col gap-2.5 flex-1 pb-2">
+        {messages.map((msg, idx) => (
+          <div
+            key={idx}
+            className={`p-3 rounded-xl text-[13px] leading-relaxed max-w-[90%] shadow-2xs ${
+              msg.sender === 'user'
+                ? 'self-end bg-slate-900 text-white rounded-br-xs'
+                : 'self-start bg-white border border-slate-200 text-slate-800 rounded-bl-xs w-full'
+            }`}
+          >
+            {msg.isThinking ? (
+              <div className="flex items-center gap-2 text-slate-500 italic">
+                <span className="inline-block animate-pulse">●</span>
+                <span>{msg.text}</span>
+              </div>
+            ) : (
+              <div className="whitespace-pre-line">{msg.text}</div>
+            )}
+            {msg.recommendation && (
+              <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+                <div className="font-semibold text-[12px] text-slate-900 mb-0.5">📚 {msg.recommendation.facility_name}</div>
+                <div className="text-[11px] text-emerald-600 font-medium">Status: {msg.recommendation.reason}</div>
+              </div>
+            )}
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
       </div>
     </div>
   )

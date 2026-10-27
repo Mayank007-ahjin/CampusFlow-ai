@@ -14,11 +14,7 @@ export default function App() {
   const [messages, setMessages] = useState([
     {
       sender: 'assistant',
-      text: 'Central Library (Floor 2) is your best bet. It is currently at 34% capacity with 42 seats open.',
-      recommendation: {
-        facility_name: 'Central Library — Floor 2',
-        reason: 'Low crowd (~5 min to find desk)'
-      }
+      text: 'Hey there! I am your CampusFlow AI assistant. I can help you check live crowd levels, find available library seats, track canteen wait times, or plan the fastest route across campus. What would you like to check today?'
     }
   ])
   const [chatInput, setChatInput] = useState('')
@@ -110,11 +106,23 @@ export default function App() {
     setMessages(newMessages)
     setChatInput('')
 
+    // Add temporary "thinking" message
+    const thinkingMessages = [...newMessages, { sender: 'assistant', text: 'CampusFlow AI is thinking...', isThinking: true }]
+    setMessages(thinkingMessages)
+
     try {
+      // Ensure at least 2.0s delay so the thinking state feels like a thoughtful agent
+      const startTime = Date.now()
+
       const isRouteQuery = queryText.toLowerCase().includes('route') || queryText.toLowerCase().includes('plan')
       const response = isRouteQuery
         ? await recommendationService.planRoute(queryText)
         : await recommendationService.getRecommendations(queryText)
+
+      const elapsed = Date.now() - startTime
+      if (elapsed < 2000) {
+        await new Promise(resolve => setTimeout(resolve, 2000 - elapsed))
+      }
 
       const topRec = response.recommendations?.[0]
 
@@ -135,7 +143,7 @@ export default function App() {
         ...newMessages,
         {
           sender: 'assistant',
-          text: 'Analyzing live campus data... Stationery shop currently has the lowest line (~4 min wait). Canteen wait is peaking at 18 min.'
+          text: 'Could not reach the CampusFlow server. Make sure the backend is running on port 8001 and try again.'
         }
       ])
     }
