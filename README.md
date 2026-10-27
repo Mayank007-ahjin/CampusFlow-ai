@@ -8,9 +8,8 @@ CampusFlow provides real-time insights into campus facility usage, helping stude
 - Check library seat availability and crowd levels across multiple campus branches (Central Library & AB2 Branch)
 - Estimate canteen wait times and rush status
 - Check stationery shop queue lengths and operating hours
-- Access the College Administrative Office with 12-hour operational time tracking
 - **OpenCampus GIS Map Viewer**: Interactive OpenStreetMap-style campus map modal featuring live vector building blocks, pan/drag capabilities, zoom controls, and dynamic crowd status badges
-- Get AI-powered recommendations and multi-facility route itineraries via Groq API integration (strict 4-5 line professional formatting with arrows, zero emojis)
+- Get AI-powered recommendations and multi-facility route itineraries via direct database-grounded smart recommendation engine (natural language responses with bullet points, zero emojis, and auto-scrolling thinking state)
 
 ## 🏗️ Project Structure
 
@@ -69,7 +68,6 @@ npm run dev
 - Central Library (AB2 Branch, Ground Floor)
 - Main Canteen (Mess Building)
 - Stationery & Print Shop (Near Workshop Building)
-- College Administrative Office (Adjacent to Academic Block 1)
 
 **Features & Enhancements:**
 - 12-Hour Clock Format (`AM`/`PM`) for operating hours across all facilities and backend validations

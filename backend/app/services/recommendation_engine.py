@@ -22,7 +22,6 @@ TYPE_KEYWORDS = {
     FacilityType.LIBRARY: ["library", "book", "study", "read", "quiet", "seat"],
     FacilityType.CANTEEN: ["canteen", "food", "lunch", "eat", "hungry", "snack", "mess", "dinner", "breakfast"],
     FacilityType.STATIONERY: ["stationery", "print", "shop", "pen", "notebook", "xerox", "photocopy"],
-    FacilityType.OFFICE: ["office", "fees", "scholarship", "administrative", "admin", "dean", "registrar"],
 }
 
 # Conversational patterns the bot handles directly (no DB query needed)
@@ -72,11 +71,12 @@ class RecommendationEngine:
         # 3. Fetch matching facilities
         facilities = self._get_candidate_facilities(
             facility_types=target_types,
-            include_closed=request.include_closed
+            include_closed=request.include_closed,
+            exclude_offices=FacilityType.OFFICE not in (target_types or [])
         )
-        # Fallback: if no type-specific results, search all (ONLY if target_types was empty)
+        # Fallback: if no type-specific results, search all (EXCLUDING office unless explicitly asked)
         if not facilities and not target_types:
-            facilities = self._get_candidate_facilities(include_closed=request.include_closed)
+            facilities = self._get_candidate_facilities(include_closed=request.include_closed, exclude_offices=True)
 
         if not facilities:
             return RecommendationResponse(
@@ -123,17 +123,15 @@ class RecommendationEngine:
         self,
         request: RecommendationRequest
     ) -> RecommendationResponse:
-        """Plan optimal route across multiple facilities strictly matching requested types."""
+        """Plan optimal route across multiple facilities strictly matching requested types, permanently excluding office."""
         query_lower = request.query.lower()
         wanted_types = request.facility_types or self._detect_types(query_lower)
 
-        # Exclude office unless office/fees/scholarship is explicitly mentioned/requested
-        exclude_offices_flag = FacilityType.OFFICE not in (wanted_types or [])
-
+        # Permanently exclude OFFICE from all multi-facility routes
         facilities = self._get_candidate_facilities(
             facility_types=wanted_types if wanted_types else None,
             include_closed=request.include_closed,
-            exclude_offices=exclude_offices_flag
+            exclude_offices=True
         )
         ranked_options = self._rank_facilities(
             facilities=facilities,
@@ -152,7 +150,10 @@ class RecommendationEngine:
                         break
             ranked_options = [o for o in stops if o.facility_type in wanted_types]
         else:
-            ranked_options = ranked_options[:2]
+            # If no types are explicitly requested in route planner, ONLY return library and canteen (never office or stationery by default)
+            ranked_options = [o for o in ranked_options if o.facility_type in [FacilityType.LIBRARY, FacilityType.CANTEEN]][:2]
+            if not ranked_options:
+                ranked_options = ranked_options[:2]
 
         answer = self._build_route_answer(query_lower, ranked_options)
 
@@ -354,15 +355,15 @@ class RecommendationEngine:
         include_closed: bool = False,
         exclude_offices: bool = False
     ) -> List[Facility]:
-        """Get facilities matching filter criteria, optionally excluding offices for route planning."""
+        """Get facilities matching filter criteria, permanently excluding offices."""
         query = self.db.query(Facility)
 
         if facility_types:
             enum_types = [t if isinstance(t, FacilityType) else FacilityType(t) for t in facility_types]
             query = query.filter(Facility.type.in_(enum_types))
-            if exclude_offices and FacilityType.OFFICE not in enum_types:
-                query = query.filter(Facility.type != FacilityType.OFFICE)
-        elif exclude_offices:
+
+        # Always filter out OFFICE if exclude_offices is true
+        if exclude_offices:
             query = query.filter(Facility.type != FacilityType.OFFICE)
 
         if not include_closed:
