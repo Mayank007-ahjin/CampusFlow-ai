@@ -14,7 +14,7 @@ def create_initial_facilities(db):
     """Create core facilities including new additions."""
     facilities = [
         Facility(
-            name="Central Library",
+            name="Central Library(AB1 Branch)",
             type=FacilityType.LIBRARY,
             location="Building Academic Block 1, 3rd floor",
             latitude=28.472353,
