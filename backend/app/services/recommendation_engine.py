@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List, Optional
-import os
+import logging
+import re
 
 from ..models import Facility, FacilityType, CrowdLevel
 from ..models.schemas import (
@@ -14,68 +15,92 @@ from ..models.schemas import (
 from ..core.config import settings
 from .crowd_estimator import CrowdEstimatorService
 
+logger = logging.getLogger(__name__)
+
+# Keyword map: ordered so _detect_types returns mention-order
+TYPE_KEYWORDS = {
+    FacilityType.STATIONERY: ["stationery", "print", "shop", "pen", "notebook", "xerox", "photocopy"],
+    FacilityType.OFFICE: ["office", "administrative", "admin", "dean", "fees", "registration"],
+    FacilityType.LIBRARY: ["library", "book", "study", "read", "quiet", "seat"],
+    FacilityType.CANTEEN: ["canteen", "food", "lunch", "eat", "hungry", "snack", "mess", "dinner", "breakfast"],
+}
+
+# Conversational patterns the bot handles directly (no DB query needed)
+GREETINGS = {"hi", "hello", "hey", "sup", "yo", "good morning", "good afternoon",
+             "good evening", "howdy", "greetings", "hii", "hiii", "hola"}
+
+THANKS = {"thanks", "thank you", "thx", "ty", "thankyou", "thank u", "appreciate it"}
+
+FAREWELL = {"bye", "goodbye", "see you", "see ya", "cya", "later", "good night", "gn"}
+
 
 class RecommendationEngine:
-    """Service for generating AI-powered facility recommendations and multi-facility route planning."""
+    """Smart campus chatbot that queries the facility database and replies conversationally."""
 
     def __init__(self, db: Session):
         self.db = db
         self.crowd_estimator = CrowdEstimatorService(db)
 
+    # ------------------------------------------------------------------
+    # Main entry: get_recommendations
+    # ------------------------------------------------------------------
     async def get_recommendations(
         self,
         request: RecommendationRequest
     ) -> RecommendationResponse:
         """
-        Generate facility recommendations based on natural language query.
-
-        Uses deterministic scoring for ranking facilities, and optionally
-        uses LLM for natural language explanation.
+        Handle any user message: greetings, questions about facilities,
+        crowd status, comparisons — all answered from the live database.
         """
-        query_lower = request.query.lower()
+        query_lower = request.query.lower().strip()
         target_types = request.facility_types
 
-        if not target_types:
-            if any(w in query_lower for w in ["stationery", "print", "shop", "pen", "notebook"]):
-                target_types = [FacilityType.STATIONERY]
-            elif any(w in query_lower for w in ["office", "administrative", "admin", "dean", "fees", "registration"]):
-                target_types = [FacilityType.OFFICE]
-            elif any(w in query_lower for w in ["library", "book", "study", "read", "quiet"]):
-                target_types = [FacilityType.LIBRARY]
-            elif any(w in query_lower for w in ["canteen", "food", "lunch", "eat", "hungry", "snack"]):
-                target_types = [FacilityType.CANTEEN]
+        # 1. Conversational shortcuts (no DB needed)
+        conv = self._handle_conversational(query_lower)
+        if conv:
+            return RecommendationResponse(
+                query=request.query,
+                answer=conv,
+                recommendations=[],
+                timestamp=datetime.utcnow()
+            )
 
-        # Get facilities matching criteria
+        # 2. Detect facility types from query
+        if not target_types:
+            target_types = self._detect_types(query_lower)
+
+        # 3. Fetch matching facilities
         facilities = self._get_candidate_facilities(
             facility_types=target_types,
             include_closed=request.include_closed
         )
-
+        # Fallback: if no type-specific results, search all
         if not facilities:
             facilities = self._get_candidate_facilities(include_closed=request.include_closed)
 
         if not facilities:
             return RecommendationResponse(
                 query=request.query,
-                answer="No facilities currently available.",
+                answer="No facilities are available right now. Try again later!",
                 recommendations=[],
                 timestamp=datetime.utcnow()
             )
 
-        # Score and rank facilities
+        # 4. Score and rank
         ranked_options = self._rank_facilities(
             facilities=facilities,
             max_wait_minutes=request.max_wait_minutes
         )
 
-        is_comparison = any(w in query_lower for w in ["all", "compare", "list", "everything", "best places", "what's available"])
+        # Show more results for comparison queries
+        is_comparison = any(w in query_lower for w in [
+            "all", "compare", "list", "everything", "best places",
+            "what's available", "show me", "options", "which"
+        ])
         final_options = ranked_options if (target_types or is_comparison) else ranked_options[:1]
 
-        # Generate structured bullet & arrow explanation (4-5 lines)
-        answer = await self._generate_explanation(
-            query=request.query,
-            options=final_options
-        )
+        # 5. Build a natural-language answer from DB data
+        answer = self._build_smart_answer(query_lower, final_options)
 
         return RecommendationResponse(
             query=request.query,
@@ -84,42 +109,36 @@ class RecommendationEngine:
             timestamp=datetime.utcnow()
         )
 
+    # ------------------------------------------------------------------
+    # Route planner
+    # ------------------------------------------------------------------
     async def plan_multi_facility_route(
         self,
         request: RecommendationRequest
     ) -> RecommendationResponse:
-        """
-        Plan optimal route across multiple facilities based on query using LLM and intelligent sequencing.
-        """
+        """Plan optimal route across multiple facilities."""
         query_lower = request.query.lower()
-        facilities = self._get_candidate_facilities(
-            facility_types=request.facility_types,
-            include_closed=request.include_closed
-        )
+        wanted_types = request.facility_types or self._detect_types(query_lower)
 
-        if not facilities:
-            facilities = self._get_candidate_facilities(include_closed=request.include_closed)
-
+        facilities = self._get_candidate_facilities(include_closed=request.include_closed)
         ranked_options = self._rank_facilities(
             facilities=facilities,
             max_wait_minutes=request.max_wait_minutes
         )
 
-        # Intelligent sorting based on custom query keywords
-        if any(w in query_lower for w in ["stationery", "print", "shop"]):
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.STATIONERY else 1)
-        elif any(w in query_lower for w in ["office", "administrative", "admin"]):
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.OFFICE else 1)
-        elif any(w in query_lower for w in ["food", "lunch", "canteen", "eat"]):
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.CANTEEN else 1)
-        elif any(w in query_lower for w in ["study", "library", "book", "read", "quiet"]):
-            ranked_options.sort(key=lambda x: 0 if x.facility_type == FacilityType.LIBRARY else 1)
+        if wanted_types:
+            # One best stop per requested type, in mention order
+            stops = []
+            for t in wanted_types:
+                t = t if isinstance(t, FacilityType) else FacilityType(t)
+                best = next((o for o in ranked_options if o.facility_type == t), None)
+                if best:
+                    stops.append(best)
+            ranked_options = stops or ranked_options[:3]
+        else:
+            ranked_options = ranked_options[:3]
 
-        # Generate structured arrow route itinerary (4-5 lines)
-        answer = await self._generate_route_explanation(
-            query=request.query,
-            options=ranked_options
-        )
+        answer = self._build_route_answer(query_lower, ranked_options)
 
         return RecommendationResponse(
             query=request.query,
@@ -128,10 +147,11 @@ class RecommendationEngine:
             timestamp=datetime.utcnow()
         )
 
+    # ------------------------------------------------------------------
+    # Proactive alerts
+    # ------------------------------------------------------------------
     def get_proactive_alerts(self) -> AlertListResponse:
-        """
-        Generate proactive peak-hour alerts and campus bottleneck warnings.
-        """
+        """Generate peak-hour alerts and campus bottleneck warnings."""
         facilities = self._get_candidate_facilities(include_closed=False)
         alerts = []
 
@@ -168,6 +188,164 @@ class RecommendationEngine:
 
         return AlertListResponse(alerts=alerts, count=len(alerts))
 
+    # ------------------------------------------------------------------
+    # Conversational handler (greetings, thanks, help, etc.)
+    # ------------------------------------------------------------------
+    def _handle_conversational(self, query: str) -> Optional[str]:
+        """Return a reply for conversational messages, or None to continue to DB lookup."""
+        q = query.strip().rstrip("!?.").strip()
+
+        # Greetings
+        if q in GREETINGS or (len(q) <= 12 and any(g in q for g in GREETINGS)):
+            return (
+                "Hey there! I'm your CampusFlow AI assistant. "
+                "I can help you find quiet study spots, check canteen wait times, "
+                "locate the print shop, or plan a route across campus.\n\n"
+                "Just ask me anything like:\n"
+                "-> \"Where should I study right now?\"\n"
+                "-> \"How busy is the canteen?\"\n"
+                "-> \"I need to print and eat — plan my route\""
+            )
+
+        # Thanks
+        if q in THANKS or any(t in q for t in THANKS):
+            return "You're welcome! Let me know if you need anything else."
+
+        # Farewell
+        if q in FAREWELL or any(f in q for f in FAREWELL):
+            return "See you later! Feel free to come back anytime you need campus info."
+
+        # Help / what can you do
+        if any(w in q for w in ["help", "what can you do", "what do you do", "how to use", "features"]):
+            return (
+                "Here's what I can help with:\n\n"
+                "-> Check live crowd levels at any facility\n"
+                "-> Find available library seats right now\n"
+                "-> Check canteen or stationery wait times\n"
+                "-> Compare multiple facilities side by side\n"
+                "-> Plan a multi-stop campus route\n\n"
+                "Just type your question naturally!"
+            )
+
+        # Identity
+        if any(w in q for w in ["who are you", "your name", "what are you"]):
+            return (
+                "I'm CampusFlow AI — your smart campus assistant. "
+                "I track real-time crowd data across libraries, canteens, "
+                "the stationery shop, and offices to help you save time on campus."
+            )
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Smart answer builder (uses DB data, no LLM needed)
+    # ------------------------------------------------------------------
+    def _build_smart_answer(self, query: str, options: List[RecommendationOption]) -> str:
+        """Build a conversational answer grounded in live facility data."""
+        if not options:
+            return "Nothing available matching your query right now. Try broadening your search!"
+
+        now = datetime.now().strftime("%I:%M %p")
+
+        # Single facility result
+        if len(options) == 1:
+            o = options[0]
+            lines = [f"Based on live campus data (as of {now}):"]
+            lines.append(f"-> {o.facility_name} — {o.crowd_level.value.upper()} crowd")
+            if o.estimated_wait_minutes:
+                lines.append(f"-> Wait time: ~{o.estimated_wait_minutes} min")
+            if o.available_seats:
+                lines.append(f"-> Available seats: {o.available_seats}")
+            lines.append(f"-> {self._get_verdict(o)}")
+            return "\n".join(lines)
+
+        # Multiple results — comparison
+        best = options[0]
+        lines = [f"Here's what I found (as of {now}):"]
+        lines.append(f"-> Best pick: {best.facility_name} ({best.reason})")
+
+        for o in options[1:4]:  # Show up to 3 alternatives
+            crowd = o.crowd_level.value
+            wait = f", ~{o.estimated_wait_minutes}m wait" if o.estimated_wait_minutes else ""
+            seats = f", {o.available_seats} seats free" if o.available_seats else ""
+            lines.append(f"-> {o.facility_name}: {crowd} crowd{wait}{seats}")
+
+        lines.append(f"\nI'd recommend {best.facility_name} — {self._get_verdict(best)}")
+        return "\n".join(lines)
+
+    def _get_verdict(self, option: RecommendationOption) -> str:
+        """One-liner verdict for a facility."""
+        if option.crowd_level == CrowdLevel.LOW:
+            if option.available_seats and option.available_seats > 20:
+                return "Great choice — low crowd with plenty of seats!"
+            return "Great choice — it's pretty quiet right now."
+        elif option.crowd_level == CrowdLevel.MODERATE:
+            if option.estimated_wait_minutes and option.estimated_wait_minutes <= 5:
+                return "Decent option — moderate crowd but short wait."
+            return "Moderately busy, but should be fine."
+        else:
+            return "It's busy right now — consider going later or checking alternatives."
+
+    # ------------------------------------------------------------------
+    # Route answer builder
+    # ------------------------------------------------------------------
+    def _build_route_answer(self, query: str, options: List[RecommendationOption]) -> str:
+        """Build a route itinerary from DB data."""
+        if not options:
+            return "No facilities match your route."
+
+        lines = ["Here's your optimized campus route:"]
+        total_wait = 0
+
+        for i, o in enumerate(options, 1):
+            wait = o.estimated_wait_minutes or 0
+            total_wait += wait
+            crowd = o.crowd_level.value
+            wait_str = f", ~{wait}m wait" if wait else ""
+            lines.append(f"{i}. -> {o.facility_name} ({crowd} crowd{wait_str})")
+
+        lines.append(f"\n-> Total estimated time: ~{total_wait} min across all stops.")
+        if total_wait > 15:
+            lines.append("-> Tip: Start with the busiest stop first to avoid peak rush.")
+        else:
+            lines.append("-> Looks like a smooth run — all stops are manageable!")
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Facility type detection (ordered by first mention in query)
+    # ------------------------------------------------------------------
+    def _detect_types(self, query_lower: str) -> List[FacilityType]:
+        """Detect all facility types mentioned in a query, ordered by first mention, with fuzzy/substring matching."""
+        hits = []
+        for ftype, words in TYPE_KEYWORDS.items():
+            positions = []
+            for w in words:
+                # Exact / plural regex search
+                m = re.search(rf"\b{w}s?\b", query_lower)
+                if m:
+                    positions.append(m.start())
+                else:
+                    # Fuzzy / substring match for typos (e.g. "statinery", "canten", "libary")
+                    # Check if keyword is substring or has <= 2 character difference for words > 4 chars
+                    for token in query_lower.split():
+                        if len(w) >= 4 and len(token) >= 4:
+                            # Simple Levenshtein distance check or prefix/substring containment
+                            if w in token or token in w or (abs(len(w) - len(token)) <= 2 and sum(a != b for a, b in zip(w, token)) <= 2):
+                                idx = query_lower.find(token)
+                                if idx != -1:
+                                    positions.append(idx)
+                        elif w in token or token in w:
+                            idx = query_lower.find(token)
+                            if idx != -1:
+                                positions.append(idx)
+            if positions:
+                hits.append((min(positions), ftype))
+        return [t for _, t in sorted(hits, key=lambda h: h[0])]
+
+    # ------------------------------------------------------------------
+    # Database queries
+    # ------------------------------------------------------------------
     def _get_candidate_facilities(
         self,
         facility_types: Optional[List[FacilityType]] = None,
@@ -185,14 +363,15 @@ class RecommendationEngine:
 
         return query.all()
 
+    # ------------------------------------------------------------------
+    # Scoring
+    # ------------------------------------------------------------------
     def _rank_facilities(
         self,
         facilities: List[Facility],
         max_wait_minutes: Optional[int] = None
     ) -> List[RecommendationOption]:
-        """
-        Rank facilities using deterministic scoring algorithm.
-        """
+        """Rank facilities using deterministic scoring."""
         options = []
 
         for facility in facilities:
@@ -259,113 +438,4 @@ class RecommendationEngine:
         if facility.available_seats and facility.type != FacilityType.STATIONERY:
             reasons.append(f"{facility.available_seats} seats free")
 
-        return " • ".join(reasons) if reasons else "Available"
-
-    async def _generate_explanation(
-        self,
-        query: str,
-        options: List[RecommendationOption]
-    ) -> str:
-        """Generate structured 4-5 line clean professional explanation with arrows."""
-        if not options:
-            return "No facilities available matching your query."
-
-        if not settings.GROQ_API_KEY:
-            best = options[0]
-            return f"Recommended Facility:\n-> {best.facility_name}\n-> Status: {best.crowd_level.value.upper()} crowd ({best.reason})\n-> Optimal choice for your query."
-
-        try:
-            from groq import Groq
-            client = Groq(api_key=settings.GROQ_API_KEY)
-            context = self._build_context(options)
-
-            prompt = f"""Student query: "{query}"
-
-Live facilities available:
-{context}
-
-Provide a crisp, professional, and directly informative response in exactly 4 to 5 lines using arrows (->). No emojis. Format strictly as:
-Recommended Facility: [Facility Name]
--> Location & Status: [Location details] | [Crowd/Wait/Seats]
--> Key Advantage: [Short specific reason]
--> Recommendation: Optimal choice for your request."""
-
-            response = client.chat.completions.create(
-                model=settings.GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a professional campus assistant. Provide clean, structured 4-5 line responses using arrows. Absolutely no emojis."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4,
-                max_tokens=120
-            )
-
-            return response.choices[0].message.content.strip()
-
-        except Exception as e:
-            print(f"LLM generation failed: {e}")
-            best = options[0]
-            return f"Recommended Facility:\n-> {best.facility_name}\n-> Status: {best.crowd_level.value.upper()} crowd ({best.reason})\n-> Optimal choice for your query."
-
-    async def _generate_route_explanation(
-        self,
-        query: str,
-        options: List[RecommendationOption]
-    ) -> str:
-        """Generate structured 4-5 line clean professional route itinerary with numbered steps and arrows."""
-        if not options:
-            return "No facilities match your route."
-
-        if not settings.GROQ_API_KEY:
-            if len(options) == 1:
-                return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n-> Ready for visit."
-            return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n2. -> {options[1].facility_name} ({options[1].reason})\n-> Efficient multi-stop flow."
-
-        try:
-            from groq import Groq
-            client = Groq(api_key=settings.GROQ_API_KEY)
-            context = self._build_context(options)
-
-            prompt = f"""Student itinerary goal: "{query}"
-
-Live facilities available:
-{context}
-
-Provide a crisp, professional route itinerary in exactly 4 to 5 lines using numbers (1., 2.) and arrows (->). No emojis. Format strictly as:
-Optimized Itinerary Plan:
-1. -> [First Facility] ([Reason])
-2. -> [Second Facility] ([Reason])
--> Flow: Sequenced for minimum wait time."""
-
-            response = client.chat.completions.create(
-                model=settings.GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a professional campus routing assistant. Provide clean 4-5 line itineraries using numbers and arrows. Absolutely no emojis."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4,
-                max_tokens=120
-            )
-            return response.choices[0].message.content.strip()
-
-        except Exception as e:
-            print(f"Route LLM generation failed: {e}")
-            if len(options) == 1:
-                return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n-> Ready for visit."
-            return f"Optimized Itinerary:\n1. -> {options[0].facility_name} ({options[0].reason})\n2. -> {options[1].facility_name} ({options[1].reason})\n-> Efficient multi-stop flow."
-
-    def _build_context(self, options: List[RecommendationOption]) -> str:
-        """Build context string from recommendation options."""
-        lines = []
-        for opt in options:
-            lines.append(
-                f"- {opt.facility_name}: {opt.crowd_level.value} crowd, {opt.estimated_wait_minutes or '0'}m wait, {opt.available_seats or 'N/A'} seats"
-            )
-        return "\n".join(lines)
-
-    def _fallback_explanation(self, options: List[RecommendationOption]) -> str:
-        """Generate short deterministic explanation."""
-        if not options:
-            return "No facilities available."
-        best = options[0]
-        return f"Recommended:\n-> {best.facility_name}\n{best.crowd_level.value.upper()} crowd ({best.reason})\nBest current option."
+        return " | ".join(reasons) if reasons else "Available"

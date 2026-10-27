@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Server
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8001
 
     # Database
     DATABASE_URL: str = "sqlite:///./campusflow.db"
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # LLM API
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "mixtral-8x7b-32768"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"

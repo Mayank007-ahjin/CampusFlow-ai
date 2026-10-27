@@ -10,6 +10,7 @@ class FacilityType(str, enum.Enum):
     LIBRARY = "library"
     CANTEEN = "canteen"
     STATIONERY = "stationery"
+    OFFICE = "office"
 
 
 class CrowdLevel(str, enum.Enum):
